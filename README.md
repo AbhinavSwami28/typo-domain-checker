@@ -30,10 +30,11 @@ A security-focused tool that generates lookalike typo domains for any given doma
 │  │  Generator   │    │                              │   │
 │  │  (lib/)      │    │  ┌──────────────────────┐   │   │
 │  │              │    │  │  1. LRU Cache (1000)  │   │   │
-│  │  10 typo     │    │  │  2. DNS Pre-filter    │   │   │
-│  │  techniques  │    │  │  3. Direct RDAP       │   │   │
-│  └─────────────┘    │  │  4. RDAP Proxy        │   │   │
-│                      │  │  5. WHOIS (whoiser)   │   │   │
+│  │  10 typo     │    │  │  2. DNS (native+DoH)  │   │   │
+│  │  techniques  │    │  │  3. HTTP Probe         │   │   │
+│  └─────────────┘    │  │  4. Direct RDAP        │   │   │
+│                      │  │  5. RDAP Proxy         │   │   │
+│                      │  │  6. WHOIS (whoiser)    │   │   │
 │                      │  └──────────────────────┘   │   │
 │                      └──────────────────────────────┘   │
 └─────────────────────────────────────────────────────────┘
@@ -55,16 +56,34 @@ A security-focused tool that generates lookalike typo domains for any given doma
 | Hyphen Insertion | `ex-ample.com` |
 | Vowel Swap | `axample.com` |
 
-### Domain Availability Check (4-source fallback chain)
+### Domain Availability Check (7-source multi-layer strategy)
 
-Each domain goes through a cascading lookup:
+Each domain is checked using a parallel + fallback strategy across 7 independent sources to maximize registered domain detection:
 
-1. **DNS Pre-filter** — instant NS/A record check (~50ms). If records exist, the domain is definitely registered. Skips expensive RDAP/WHOIS for obvious cases.
-2. **Direct Registry RDAP** — queries the authoritative RDAP server for the TLD (e.g., Verisign for `.com/.net`). Fastest and most reliable source.
-3. **RDAP Proxy** — falls back to `rdap.org` bootstrap proxy if direct lookup fails.
-4. **WHOIS** — uses `whoiser` (pure JS) to query WHOIS servers directly. Handles TLDs where RDAP isn't available.
+#### Phase 1 — Parallel (all run simultaneously)
 
-Results are cached in a 1000-entry LRU cache to avoid redundant lookups.
+| Source | What it does | Why it helps |
+|---|---|---|
+| **Native DNS** | NS/A record check via `dns.resolve` (~50ms) | Instant confirmation if domain has DNS records |
+| **Google DNS-over-HTTPS** | Queries `dns.google/resolve` for A records | Reliable in serverless (Vercel) where native DNS can be flaky |
+| **Cloudflare DNS-over-HTTPS** | Queries `cloudflare-dns.com/dns-query` | Redundant DoH provider for maximum coverage |
+| **HTTP Probe** | HEAD request to `https://{domain}` | Detects active web servers — confirms registration + active use |
+| **Direct Registry RDAP** | Queries authoritative RDAP server for the TLD | Fastest way to get registrar, dates, nameservers (20+ TLD mappings) |
+
+#### Phase 2 — Sequential Fallbacks (only if RDAP didn't return details)
+
+| Source | What it does | Why it helps |
+|---|---|---|
+| **RDAP Proxy** | Falls back to `rdap.org` bootstrap proxy | Covers TLDs without direct RDAP mappings |
+| **WHOIS (whoiser)** | Pure-JS WHOIS client, queries WHOIS servers directly | Last resort for TLDs where RDAP is unavailable |
+
+#### Deduplication & Merging
+
+- DNS/HTTP sources confirm registration (boolean signal)
+- RDAP/WHOIS provide details (registrar, dates, nameservers)
+- If DNS confirms registered but RDAP/WHOIS fail, still reported as registered with a note
+- `source` field shows which sources contributed (e.g., `rdap+dns+http`)
+- Results are cached in a 1000-entry LRU cache to avoid redundant lookups
 
 ### Frontend Features
 - **Risk scoring** — each typo gets a risk score (Critical/High/Medium/Low) based on edit distance, TLD match, typo type, and registration status
@@ -88,9 +107,11 @@ Results are cached in a 1000-entry LRU cache to avoid redundant lookups.
 | Frontend | [React](https://react.dev/) + [Vite](https://vitejs.dev/) | SPA with HMR |
 | Backend | [Express](https://expressjs.com/) | Local dev server |
 | Serverless | [Vercel Functions](https://vercel.com/docs/functions) | Production API |
-| RDAP | [rdap.org](https://about.rdap.org/) + direct registries | Domain registration data |
-| WHOIS | [whoiser](https://github.com/nicedoc/whoiser) | WHOIS fallback (pure JS) |
-| DNS | Node.js `dns` module | Pre-filter for fast checks |
+| DNS | Node.js `dns` module | Native NS/A record resolution |
+| DNS-over-HTTPS | [Google DoH](https://developers.google.com/speed/public-dns/docs/doh) + [Cloudflare DoH](https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/) | Serverless-safe DNS checks (no API key) |
+| HTTP Probe | Node.js `fetch` | Detect active web servers |
+| RDAP | [rdap.org](https://about.rdap.org/) + direct registries | Domain registration data (registrar, dates) |
+| WHOIS | [whoiser](https://github.com/nicedoc/whoiser) | WHOIS fallback (pure JS, no API key) |
 | Dev runner | [concurrently](https://github.com/open-cli-tools/concurrently) | Run server + client together |
 
 ## Getting Started
