@@ -2,6 +2,7 @@
   "name": "typo-domain-checker",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "concurrently \"npm run server\" \"npm run client\"",
     "server": "cd server && node index.js",
@@ -9,5 +10,8 @@
   },
   "devDependencies": {
     "concurrently": "^8.2.2"
+  },
+  "dependencies": {
+    "whoiser": "^2.0.0-beta.10"
   }
 }

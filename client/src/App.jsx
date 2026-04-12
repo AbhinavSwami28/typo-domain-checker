@@ -7,16 +7,89 @@ const STATUS_LABELS = {
   unknown: "Unknown",
 };
 
-// Concurrent pool: runs `fn` for each item with max `concurrency` in-flight
-async function runPool(items, concurrency, fn) {
+const PAGE_SIZE = 50;
+
+// Concurrent pool: runs fn for each item with max concurrency in-flight
+async function runPool(items, concurrency, fn, signal) {
   let idx = 0;
   async function worker() {
     while (idx < items.length) {
+      if (signal?.aborted) return;
       const i = idx++;
       await fn(items[i], i);
     }
   }
-  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => worker()));
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, items.length) }, () => worker())
+  );
+}
+
+// Levenshtein distance for risk scoring
+function levenshtein(a, b) {
+  const m = a.length, n = b.length;
+  const dp = Array.from({ length: m + 1 }, (_, i) => {
+    const row = new Array(n + 1);
+    row[0] = i;
+    return row;
+  });
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1]
+        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+    }
+  }
+  return dp[m][n];
+}
+
+function computeRisk(original, typo) {
+  const origName = original.split(".")[0];
+  const typoName = typo.domain.split(".")[0];
+  const dist = levenshtein(origName, typoName);
+  const sameTld = original.split(".").slice(1).join(".") === typo.domain.split(".").slice(1).join(".");
+
+  // Closer edit distance + same TLD = higher risk
+  let score = Math.max(0, 100 - dist * 25);
+  if (!sameTld) score = Math.max(0, score - 20);
+  if (typo.type === "Homoglyph") score = Math.min(100, score + 15);
+  if (typo.type === "Transposition") score = Math.min(100, score + 10);
+  if (typo.status === "registered") score = Math.min(100, score + 20);
+
+  return score;
+}
+
+function getRiskLabel(score) {
+  if (score >= 80) return { label: "Critical", cls: "risk-critical" };
+  if (score >= 60) return { label: "High", cls: "risk-high" };
+  if (score >= 40) return { label: "Medium", cls: "risk-medium" };
+  return { label: "Low", cls: "risk-low" };
+}
+
+function exportCSV(typos, original) {
+  const header = "Domain,Type,Status,Risk Score,Registrar,Created,Expires,Source\n";
+  const rows = typos.map((t) => {
+    const risk = computeRisk(original, t);
+    return [
+      t.domain,
+      t.type,
+      t.status,
+      risk,
+      t.registrar || "",
+      t.created || "",
+      t.expires || "",
+      t.source || "",
+    ]
+      .map((v) => `"${String(v).replace(/"/g, '""')}"`)
+      .join(",");
+  });
+  const blob = new Blob([header + rows.join("\n")], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `typo-domains-${original}-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 export default function App() {
@@ -28,13 +101,16 @@ export default function App() {
   const [stats, setStats] = useState(null);
   const [filter, setFilter] = useState("all");
   const [progress, setProgress] = useState({ done: 0, total: 0 });
-  const cancelledRef = useRef(false);
+  const [page, setPage] = useState(0);
+  const [sortBy, setSortBy] = useState(null); // null | "risk" | "domain" | "status"
+  const abortRef = useRef(null);
 
-  const checkBatch = useCallback(async (domains, startIndex) => {
+  const checkBatch = useCallback(async (domains, signal) => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    if (signal) signal.addEventListener("abort", () => controller.abort());
+
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 15000);
-
       const res = await fetch("/api/check-batch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -42,14 +118,9 @@ export default function App() {
         signal: controller.signal,
       });
       clearTimeout(timeout);
-
       const text = await res.text();
       let data;
-      try {
-        data = JSON.parse(text);
-      } catch {
-        throw new Error("Invalid response from server");
-      }
+      try { data = JSON.parse(text); } catch { throw new Error("Bad response"); }
 
       setTypos((prev) => {
         const updated = [...prev];
@@ -58,25 +129,23 @@ export default function App() {
           if (idx !== -1) {
             updated[idx] = {
               ...updated[idx],
-              status:
-                result.registered === true
-                  ? "registered"
-                  : result.registered === false
-                    ? "available"
-                    : "unknown",
+              status: result.registered === true ? "registered"
+                : result.registered === false ? "available" : "unknown",
               registrar: result.registrar ?? null,
               created: result.created ?? null,
               expires: result.expires ?? null,
+              nameservers: result.nameservers ?? [],
               note: result.note ?? null,
+              source: result.source ?? null,
+              cached: result.cached ?? false,
             };
           }
         }
         return updated;
       });
-
       setProgress((p) => ({ ...p, done: p.done + domains.length }));
-    } catch {
-      // Mark all in this batch as unknown
+    } catch (err) {
+      if (err.name === "AbortError") return;
       setTypos((prev) => {
         const updated = [...prev];
         for (const d of domains) {
@@ -91,13 +160,23 @@ export default function App() {
     }
   }, []);
 
+  const handleCancel = () => {
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+      setChecking(false);
+    }
+  };
+
   const handleGenerate = async (e) => {
     e.preventDefault();
     setError("");
     setTypos([]);
     setStats(null);
     setFilter("all");
-    cancelledRef.current = false;
+    setPage(0);
+    setSortBy(null);
+    handleCancel();
 
     const trimmed = domain.trim().toLowerCase();
     if (!trimmed || !trimmed.includes(".")) {
@@ -113,9 +192,7 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ domain: trimmed }),
       });
-
       const data = await res.json();
-
       if (!res.ok) {
         setError(data.error || "Failed to generate typo domains");
         setLoading(false);
@@ -128,34 +205,43 @@ export default function App() {
       setLoading(false);
       setChecking(true);
 
-      // Backend supports 20 per batch; use 80% (16) as threshold
       const BATCH_SIZE = 16;
       const chunks = [];
       for (let i = 0; i < typoList.length; i += BATCH_SIZE) {
         chunks.push(typoList.slice(i, i + BATCH_SIZE).map((t) => t.domain));
       }
-
       setProgress({ done: 0, total: typoList.length });
 
-      // Run 4 batch requests concurrently — each batch checks 15 domains
-      // server-side in parallel. So effectively 60 domains checked at once.
-      await runPool(chunks, 4, async (chunk, i) => {
-        if (cancelledRef.current) return;
-        await checkBatch(chunk, i * BATCH_SIZE);
-      });
+      const ac = new AbortController();
+      abortRef.current = ac;
 
-      setChecking(false);
+      await runPool(chunks, 4, (chunk) => checkBatch(chunk, ac.signal), ac.signal);
+
+      if (!ac.signal.aborted) setChecking(false);
     } catch {
-      setError("Failed to connect to server. Is the backend running?");
+      setError("Failed to connect to server.");
       setLoading(false);
       setChecking(false);
     }
   };
 
-  const filteredTypos = typos.filter((t) => {
-    if (filter === "all") return true;
-    return t.status === filter;
-  });
+  // Filtering
+  const filtered = typos.filter((t) => filter === "all" || t.status === filter);
+
+  // Sorting
+  const sorted = [...filtered];
+  if (sortBy === "risk" && stats) {
+    sorted.sort((a, b) => computeRisk(stats.original, b) - computeRisk(stats.original, a));
+  } else if (sortBy === "domain") {
+    sorted.sort((a, b) => a.domain.localeCompare(b.domain));
+  } else if (sortBy === "status") {
+    const order = { registered: 0, available: 1, unknown: 2, checking: 3 };
+    sorted.sort((a, b) => (order[a.status] ?? 9) - (order[b.status] ?? 9));
+  }
+
+  // Pagination
+  const totalPages = Math.ceil(sorted.length / PAGE_SIZE);
+  const paginated = sorted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
   const counts = {
     all: typos.length,
@@ -169,23 +255,17 @@ export default function App() {
     if (!dateStr) return "N/A";
     try {
       return new Date(dateStr).toLocaleDateString("en-US", {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
+        year: "numeric", month: "short", day: "numeric",
       });
-    } catch {
-      return "N/A";
-    }
-  };
-
-  const displayField = (value) => {
-    if (value === null || value === undefined || value === "" || value === "Unknown") {
-      return "N/A";
-    }
-    return value;
+    } catch { return "N/A"; }
   };
 
   const pct = progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
+
+  const handleSort = (col) => {
+    setSortBy((prev) => (prev === col ? null : col));
+    setPage(0);
+  };
 
   return (
     <div className="app">
@@ -204,29 +284,42 @@ export default function App() {
           placeholder="Enter a domain (e.g. example.com)"
           className="domain-input"
           disabled={loading}
+          aria-label="Domain name"
         />
         <button type="submit" className="btn-generate" disabled={loading}>
           {loading ? "Generating..." : "Generate & Check"}
         </button>
+        {checking && (
+          <button type="button" className="btn-cancel" onClick={handleCancel}>
+            Cancel
+          </button>
+        )}
       </form>
 
-      {error && <div className="error">{error}</div>}
+      {error && <div className="error" role="alert">{error}</div>}
 
       {stats && (
         <div className="stats-bar">
           <span className="stats-original">
             Target: <strong>{stats.original}</strong>
           </span>
-          <span className="stats-count">
-            {stats.count} typo domains generated
-          </span>
+          <span className="stats-count">{stats.count} variants</span>
           {checking && (
             <span className="stats-progress">
               Checking... {progress.done}/{progress.total} ({pct}%)
             </span>
           )}
           {!checking && typos.length > 0 && (
-            <span className="stats-done">All checks complete</span>
+            <>
+              <span className="stats-done">All checks complete</span>
+              <button
+                className="btn-export"
+                onClick={() => exportCSV(typos, stats.original)}
+                title="Download results as CSV"
+              >
+                Export CSV
+              </button>
+            </>
           )}
         </div>
       )}
@@ -244,7 +337,7 @@ export default function App() {
               <button
                 key={f}
                 className={`filter-btn ${filter === f ? "active" : ""}`}
-                onClick={() => setFilter(f)}
+                onClick={() => { setFilter(f); setPage(0); }}
               >
                 {f.charAt(0).toUpperCase() + f.slice(1)} ({counts[f]})
               </button>
@@ -255,65 +348,134 @@ export default function App() {
             <table>
               <thead>
                 <tr>
-                  <th style={{ width: "50px" }}>#</th>
-                  <th style={{ width: "250px" }}>Domain</th>
-                  <th style={{ width: "150px" }}>Type</th>
-                  <th style={{ width: "120px" }}>Status</th>
-                  <th style={{ width: "200px" }}>Registrar</th>
-                  <th style={{ width: "130px" }}>Created</th>
-                  <th style={{ width: "130px" }}>Expires</th>
+                  <th style={{ width: "45px" }}>#</th>
+                  <th
+                    style={{ width: "220px", cursor: "pointer" }}
+                    onClick={() => handleSort("domain")}
+                  >
+                    Domain {sortBy === "domain" ? "▲" : ""}
+                  </th>
+                  <th style={{ width: "120px" }}>Type</th>
+                  <th
+                    style={{ width: "110px", cursor: "pointer" }}
+                    onClick={() => handleSort("status")}
+                  >
+                    Status {sortBy === "status" ? "▲" : ""}
+                  </th>
+                  <th
+                    style={{ width: "90px", cursor: "pointer" }}
+                    onClick={() => handleSort("risk")}
+                  >
+                    Risk {sortBy === "risk" ? "▼" : ""}
+                  </th>
+                  <th style={{ width: "170px" }}>Registrar</th>
+                  <th style={{ width: "110px" }}>Created</th>
+                  <th style={{ width: "110px" }}>Expires</th>
+                  <th style={{ width: "60px" }}>Source</th>
                 </tr>
               </thead>
               <tbody>
-                {filteredTypos.map((t, i) => (
-                  <tr key={t.domain} className={`row-${t.status}`}>
-                    <td className="col-num">{i + 1}</td>
-                    <td className="col-domain">{t.domain}</td>
-                    <td className="col-type">
-                      <span className="badge-type">{t.type}</span>
-                    </td>
-                    <td className="col-status">
-                      <span className={`badge-status badge-${t.status}`}>
-                        {STATUS_LABELS[t.status]}
-                      </span>
-                      {t.note && t.status === "unknown" && (
-                        <span className="note-text"> ({t.note})</span>
-                      )}
-                    </td>
-                    <td className="col-registrar" title={t.status === "registered" ? (t.registrar || "") : ""}>
-                      {t.status === "registered" ? displayField(t.registrar) : "-"}
-                    </td>
-                    <td className="col-date">
-                      {t.status === "registered" ? formatDate(t.created) : "-"}
-                    </td>
-                    <td className="col-date">
-                      {t.status === "registered" ? formatDate(t.expires) : "-"}
-                    </td>
-                  </tr>
-                ))}
+                {paginated.map((t, i) => {
+                  const riskScore = stats ? computeRisk(stats.original, t) : 0;
+                  const risk = getRiskLabel(riskScore);
+                  return (
+                    <tr key={t.domain} className={`row-${t.status}`}>
+                      <td className="col-num">{page * PAGE_SIZE + i + 1}</td>
+                      <td className="col-domain">{t.domain}</td>
+                      <td className="col-type">
+                        <span className="badge-type">{t.type}</span>
+                      </td>
+                      <td className="col-status">
+                        <span className={`badge-status badge-${t.status}`}>
+                          {STATUS_LABELS[t.status]}
+                        </span>
+                      </td>
+                      <td className="col-risk">
+                        <span className={`badge-risk ${risk.cls}`}>
+                          {risk.label}
+                        </span>
+                      </td>
+                      <td className="col-registrar" title={t.registrar || ""}>
+                        {t.status === "registered" ? (t.registrar || "N/A") : "-"}
+                      </td>
+                      <td className="col-date">
+                        {t.status === "registered" ? formatDate(t.created) : "-"}
+                      </td>
+                      <td className="col-date">
+                        {t.status === "registered" ? formatDate(t.expires) : "-"}
+                      </td>
+                      <td className="col-source">
+                        {t.source ? (
+                          <span className="badge-source" title={t.cached ? "Cached" : ""}>
+                            {t.source}{t.cached ? " *" : ""}
+                          </span>
+                        ) : "-"}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
+
+          {totalPages > 1 && (
+            <div className="pagination">
+              <button disabled={page === 0} onClick={() => setPage(0)}>
+                First
+              </button>
+              <button disabled={page === 0} onClick={() => setPage((p) => p - 1)}>
+                Prev
+              </button>
+              <span className="page-info">
+                Page {page + 1} of {totalPages} ({sorted.length} results)
+              </span>
+              <button
+                disabled={page >= totalPages - 1}
+                onClick={() => setPage((p) => p + 1)}
+              >
+                Next
+              </button>
+              <button
+                disabled={page >= totalPages - 1}
+                onClick={() => setPage(totalPages - 1)}
+              >
+                Last
+              </button>
+            </div>
+          )}
         </>
       )}
 
       {typos.length === 0 && !loading && !error && (
         <div className="empty-state">
           <div className="empty-icon">&#128269;</div>
-          <p>Enter a domain above to generate lookalike typo variations and check if they are registered.</p>
+          <p>
+            Enter a domain above to generate lookalike typo variations and check
+            if they are registered.
+          </p>
           <div className="techniques">
-            <h3>Detection Techniques Used</h3>
+            <h3>Detection Techniques</h3>
             <div className="technique-grid">
-              <span>Character Omission</span>
-              <span>Transposition</span>
-              <span>Adjacent Key</span>
-              <span>Character Duplication</span>
-              <span>Character Insertion</span>
-              <span>Homoglyph Substitution</span>
-              <span>TLD Swap</span>
-              <span>Dot Insertion</span>
-              <span>Hyphen Insertion</span>
-              <span>Vowel Swap</span>
+              {[
+                "Character Omission", "Transposition", "Adjacent Key",
+                "Character Duplication", "Character Insertion",
+                "Homoglyph Substitution", "TLD Swap", "Dot Insertion",
+                "Hyphen Insertion", "Vowel Swap",
+              ].map((t) => (
+                <span key={t}>{t}</span>
+              ))}
+            </div>
+          </div>
+          <div className="techniques" style={{ marginTop: "24px" }}>
+            <h3>Lookup Sources (Multi-Source)</h3>
+            <div className="technique-grid">
+              {[
+                "Native DNS", "Google DoH", "Cloudflare DoH",
+                "HTTP Probe", "Direct Registry RDAP",
+                "RDAP Proxy (rdap.org)", "WHOIS (whoiser)",
+              ].map((t) => (
+                <span key={t}>{t}</span>
+              ))}
             </div>
           </div>
         </div>
