@@ -30,7 +30,7 @@ A security-focused tool that generates lookalike typo domains for any given doma
 │  │  Generator   │    │                              │   │
 │  │  (lib/)      │    │  ┌──────────────────────┐   │   │
 │  │              │    │  │  1. LRU Cache (1000)  │   │   │
-│  │  34 typo     │    │  │  2. DNS (native+DoH)  │   │   │
+│  │  37 typo     │    │  │  2. DNS (native+DoH)  │   │   │
 │  │  techniques  │    │  │  3. HTTP Probe         │   │   │
 │  └─────────────┘    │  │  4. Direct RDAP        │   │   │
 │                      │  │  5. RDAP Proxy         │   │   │
@@ -42,7 +42,7 @@ A security-focused tool that generates lookalike typo domains for any given doma
 
 ## Features
 
-### Typo Generation (34 techniques)
+### Typo Generation (37 techniques)
 
 Techniques derived from industry tools like [dnstwist](https://github.com/elceef/dnstwist) and URLCrazy:
 
@@ -83,6 +83,9 @@ Techniques derived from industry tools like [dnstwist](https://github.com/elceef
 | 32 | Double Replacement | `google.com` → `gggle.com` (2 consecutive chars replaced) |
 | 33 | Wrong SLD | `example.co.uk` → `example.org.uk`, `example.me.uk` |
 | 34 | Dynamic DNS | `netflix.dyndns.org`, `netflix.duckdns.org` |
+| 35 | Consonant Swap | `netfliks.com` (x↔ks), `gredit.com` (c↔g) |
+| 36 | Greek/Armenian Confusables | `νetflix.com` (Greek ν), `nεtflix.com` (Greek ε) |
+| 37 | Combo Squatting | `netflix-login.com`, `netflix-verify.com`, `netflix-payment.com` |
 
 ### Domain Availability Check (7-source multi-layer strategy)
 

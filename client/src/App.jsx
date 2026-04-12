@@ -748,6 +748,8 @@ export default function App() {
                 "Vowel Omission", "Numeral Swap", "Add TLD",
                 "Dot to Dash", "Dash to Dot", "Missing Dot",
                 "Double Replacement", "Wrong SLD", "Dynamic DNS",
+                "Consonant Swap", "Greek/Armenian Confusables",
+                "Combo Squatting",
               ].map((t) => (
                 <span key={t}>{t}</span>
               ))}
