@@ -78,6 +78,7 @@ Techniques derived from industry tools like [dnstwist](https://github.com/elceef
 | 28 | Numeral Swap | `go4it.com` ↔ `goforit.com` (digit ↔ word/ordinal) |
 | 29 | Add TLD | `example.com.org` (stacks TLD after existing domain) |
 | 30 | Dot to Dash | `sub.example.com` → `sub-example.com` |
+| 30b | Dash to Dot | `my-example.com` → `my.example.com` |
 | 31 | Missing Dot | `www.netflix.com` → `wwwnetflix.com`, `netflixcom.com` |
 | 32 | Double Replacement | `google.com` → `gggle.com` (2 consecutive chars replaced) |
 | 33 | Wrong SLD | `example.co.uk` → `example.org.uk`, `example.me.uk` |
