@@ -33,7 +33,7 @@ export default function App() {
   const checkBatch = useCallback(async (domains, startIndex) => {
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 12000);
+      const timeout = setTimeout(() => controller.abort(), 15000);
 
       const res = await fetch("/api/check-batch", {
         method: "POST",
@@ -42,7 +42,14 @@ export default function App() {
         signal: controller.signal,
       });
       clearTimeout(timeout);
-      const data = await res.json();
+
+      const text = await res.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        throw new Error("Invalid response from server");
+      }
 
       setTypos((prev) => {
         const updated = [...prev];
@@ -121,8 +128,8 @@ export default function App() {
       setLoading(false);
       setChecking(true);
 
-      // Split into chunks of 15 (backend batch limit)
-      const BATCH_SIZE = 15;
+      // Backend supports 20 per batch; use 80% (16) as threshold
+      const BATCH_SIZE = 16;
       const chunks = [];
       for (let i = 0; i < typoList.length; i += BATCH_SIZE) {
         chunks.push(typoList.slice(i, i + BATCH_SIZE).map((t) => t.domain));

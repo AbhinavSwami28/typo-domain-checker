@@ -105,7 +105,7 @@ app.post("/api/check-batch", async (req, res) => {
     return res.status(400).json({ error: "Provide an array of domains" });
   }
 
-  const batch = domains.slice(0, 15);
+  const batch = domains.slice(0, 20);
 
   async function checkOne(domain) {
     try {

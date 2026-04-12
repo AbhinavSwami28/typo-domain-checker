@@ -48,8 +48,8 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "Provide an array of domains" });
   }
 
-  // Cap at 15 per batch to stay within serverless time limits
-  const batch = domains.slice(0, 15);
+  // Cap at 20 per batch to stay within serverless time limits
+  const batch = domains.slice(0, 20);
   const results = await Promise.all(batch.map(checkOne));
 
   res.json({ results });
