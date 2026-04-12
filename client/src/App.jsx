@@ -657,7 +657,9 @@ export default function App() {
                 "Singular/Plural", "Numeric Addition",
                 "Cyrillic IDN Homograph", "Homophones",
                 "Common Misspellings", "Double Omission",
-                "Vowel Omission",
+                "Vowel Omission", "Numeral Swap", "Add TLD",
+                "Dot to Dash", "Missing Dot",
+                "Double Replacement", "Wrong SLD", "Dynamic DNS",
               ].map((t) => (
                 <span key={t}>{t}</span>
               ))}

@@ -30,7 +30,7 @@ A security-focused tool that generates lookalike typo domains for any given doma
 │  │  Generator   │    │                              │   │
 │  │  (lib/)      │    │  ┌──────────────────────┐   │   │
 │  │              │    │  │  1. LRU Cache (1000)  │   │   │
-│  │  27 typo     │    │  │  2. DNS (native+DoH)  │   │   │
+│  │  34 typo     │    │  │  2. DNS (native+DoH)  │   │   │
 │  │  techniques  │    │  │  3. HTTP Probe         │   │   │
 │  └─────────────┘    │  │  4. Direct RDAP        │   │   │
 │                      │  │  5. RDAP Proxy         │   │   │
@@ -42,7 +42,7 @@ A security-focused tool that generates lookalike typo domains for any given doma
 
 ## Features
 
-### Typo Generation (27 techniques)
+### Typo Generation (34 techniques)
 
 Techniques derived from industry tools like [dnstwist](https://github.com/elceef/dnstwist) and URLCrazy:
 
@@ -75,6 +75,13 @@ Techniques derived from industry tools like [dnstwist](https://github.com/elceef
 | 25 | Common Misspellings | `accommodasion.com` (tion→sion) |
 | 26 | Double Omission | `ntflx.com` (two chars removed at once) |
 | 27 | Vowel Omission | `vrshds-sthrlnd.com` (multiple vowels stripped) |
+| 28 | Numeral Swap | `go4it.com` ↔ `goforit.com` (digit ↔ word/ordinal) |
+| 29 | Add TLD | `example.com.org` (stacks TLD after existing domain) |
+| 30 | Dot to Dash | `sub.example.com` → `sub-example.com` |
+| 31 | Missing Dot | `www.netflix.com` → `wwwnetflix.com`, `netflixcom.com` |
+| 32 | Double Replacement | `google.com` → `gggle.com` (2 consecutive chars replaced) |
+| 33 | Wrong SLD | `example.co.uk` → `example.org.uk`, `example.me.uk` |
+| 34 | Dynamic DNS | `netflix.dyndns.org`, `netflix.duckdns.org` |
 
 ### Domain Availability Check (7-source multi-layer strategy)
 
