@@ -290,18 +290,31 @@ typo-domain-checker/
 
 ## Performance
 
-Benchmarks for `netflix.com` (409 generated variants, 294 registered):
+Benchmarks for `netflix.com` (672 generated variants, 328 registered):
 
 | Metric | Value |
 |---|---|
-| Typo generation (25 techniques) | ~1.4ms |
-| Full batch check (409 domains, 7 sources) | ~112s |
-| Average per-domain check | ~274ms (with parallelism) |
-| Cache hit | <1ms |
-| Unknown/failed lookups | 0 out of 409 |
-| Batch throughput | ~60 domains checked concurrently (4 batches x 10 workers) |
+| Typo generation (34 techniques) | ~7ms |
+| Full batch check (672 domains, 7 sources) | ~132s (sequential) |
+| Average per-domain check | ~196ms (with parallelism) |
+| Server-side LRU cache hit | 0.1ms |
+| Browser IndexedDB cache hit | 0ms (instant, 24h TTL) |
+| Unknown/failed lookups | 0 out of 672 |
+| Batch throughput | ~160 domains checked concurrently (8 batches x 20 workers) |
 
-Frontend batching: 16 domains per batch, 4 batches in-flight concurrently. Backend runs 10 concurrent lookups per batch. Effectively checks ~60 domains at once.
+### Optimization details
+
+| Optimization | Impact |
+|---|---|
+| **DNS fast-rejection** | Domains with NXDOMAIN skip RDAP/WHOIS/HTTP entirely (~50ms vs ~500ms) |
+| **Early termination** | When RDAP returns full details, HTTP probe result is ignored |
+| **Skip WHOIS for confirmed non-existent** | If DNS + RDAP both say not registered, skip WHOIS |
+| **Browser IndexedDB cache** | Repeat scans serve cached results instantly (24h TTL) |
+| **8x frontend concurrency** | 8 batch requests in-flight simultaneously (up from 4) |
+| **20x backend concurrency** | 20 concurrent domain lookups per batch (up from 10) |
+| **Batch size 20** | Full utilization of backend cap (up from 16) |
+
+Frontend batching: 20 domains per batch, 8 batches in-flight concurrently. Backend runs 20 concurrent lookups per batch. Effectively checks ~160 domains simultaneously. Second scan of the same domain set is instant from browser cache.
 
 ## Limitations & Known Caveats
 

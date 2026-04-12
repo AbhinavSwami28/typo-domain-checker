@@ -88,7 +88,7 @@ app.post("/api/check-batch", async (req, res) => {
     .filter((d) => typeof d === "string" && d.includes("."))
     .slice(0, 20);
 
-  const results = await checkBatch(clean, 10);
+  const results = await checkBatch(clean, 20);
   res.json({ results });
 });
 

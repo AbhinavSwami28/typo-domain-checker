@@ -8,6 +8,76 @@ const STATUS_LABELS = {
 };
 
 const PAGE_SIZE = 50;
+const BATCH_SIZE = 20;  // Match backend cap
+const CONCURRENCY = 8;  // Concurrent batch requests
+const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+const DB_NAME = "typo-domain-cache";
+const STORE_NAME = "results";
+
+// ---------------------------------------------------------------------------
+// IndexedDB browser cache — persists domain check results across sessions.
+// Domains that were checked recently are served from cache instantly.
+// ---------------------------------------------------------------------------
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME, { keyPath: "domain" });
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function cacheGet(domains) {
+  try {
+    const db = await openDB();
+    const tx = db.transaction(STORE_NAME, "readonly");
+    const store = tx.objectStore(STORE_NAME);
+    const now = Date.now();
+    const results = new Map();
+    await Promise.all(
+      domains.map(
+        (d) =>
+          new Promise((resolve) => {
+            const req = store.get(d);
+            req.onsuccess = () => {
+              const entry = req.result;
+              if (entry && now - entry.ts < CACHE_TTL) {
+                results.set(d, entry.data);
+              }
+              resolve();
+            };
+            req.onerror = () => resolve();
+          })
+      )
+    );
+    db.close();
+    return results;
+  } catch {
+    return new Map();
+  }
+}
+
+async function cachePut(results) {
+  try {
+    const db = await openDB();
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    const store = tx.objectStore(STORE_NAME);
+    const now = Date.now();
+    for (const r of results) {
+      store.put({ domain: r.domain, data: r, ts: now });
+    }
+    await new Promise((resolve, reject) => {
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  } catch { /* cache write failure is non-fatal */ }
+}
 
 // Concurrent pool: runs fn for each item with max concurrency in-flight
 async function runPool(items, concurrency, fn, signal) {
@@ -177,9 +247,35 @@ export default function App() {
   });
   const abortRef = useRef(null);
 
+  // Apply a batch of results to the typos state
+  const applyResults = useCallback((results, source) => {
+    setTypos((prev) => {
+      const updated = [...prev];
+      for (const result of results) {
+        const idx = updated.findIndex((t) => t.domain === result.domain);
+        if (idx !== -1) {
+          updated[idx] = {
+            ...updated[idx],
+            status: result.registered === true ? "registered"
+              : result.registered === false ? "available" : "unknown",
+            registrar: result.registrar ?? null,
+            created: result.created ?? null,
+            expires: result.expires ?? null,
+            nameservers: result.nameservers ?? [],
+            note: result.note ?? null,
+            source: (result.source ?? "") + (source === "browser-cache" ? " (cached)" : ""),
+            cached: source === "browser-cache",
+          };
+        }
+      }
+      return updated;
+    });
+    setProgress((p) => ({ ...p, done: p.done + results.length }));
+  }, []);
+
   const checkBatch = useCallback(async (domains, signal) => {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
+    const timeout = setTimeout(() => controller.abort(), 20000);
     if (signal) signal.addEventListener("abort", () => controller.abort());
 
     try {
@@ -194,43 +290,20 @@ export default function App() {
       let data;
       try { data = JSON.parse(text); } catch { throw new Error("Bad response"); }
 
-      setTypos((prev) => {
-        const updated = [...prev];
-        for (const result of data.results) {
-          const idx = updated.findIndex((t) => t.domain === result.domain);
-          if (idx !== -1) {
-            updated[idx] = {
-              ...updated[idx],
-              status: result.registered === true ? "registered"
-                : result.registered === false ? "available" : "unknown",
-              registrar: result.registrar ?? null,
-              created: result.created ?? null,
-              expires: result.expires ?? null,
-              nameservers: result.nameservers ?? [],
-              note: result.note ?? null,
-              source: result.source ?? null,
-              cached: result.cached ?? false,
-            };
-          }
-        }
-        return updated;
-      });
-      setProgress((p) => ({ ...p, done: p.done + domains.length }));
+      // Write results to browser cache
+      cachePut(data.results);
+
+      applyResults(data.results, "api");
     } catch (err) {
+      clearTimeout(timeout);
       if (err.name === "AbortError") return;
-      setTypos((prev) => {
-        const updated = [...prev];
-        for (const d of domains) {
-          const idx = updated.findIndex((t) => t.domain === d);
-          if (idx !== -1) {
-            updated[idx] = { ...updated[idx], status: "unknown", note: "Batch failed" };
-          }
-        }
-        return updated;
-      });
-      setProgress((p) => ({ ...p, done: p.done + domains.length }));
+      // Mark all in this batch as unknown
+      const failedResults = domains.map((d) => ({
+        domain: d, registered: null, note: "Batch failed",
+      }));
+      applyResults(failedResults, "error");
     }
-  }, []);
+  }, [applyResults]);
 
   const handleCancel = () => {
     if (abortRef.current) {
@@ -289,17 +362,32 @@ export default function App() {
       setLoading(false);
       setChecking(true);
 
-      const BATCH_SIZE = 16;
-      const chunks = [];
-      for (let i = 0; i < typoList.length; i += BATCH_SIZE) {
-        chunks.push(typoList.slice(i, i + BATCH_SIZE).map((t) => t.domain));
-      }
-      setProgress({ done: 0, total: typoList.length });
+      const allDomains = typoList.map((t) => t.domain);
+      setProgress({ done: 0, total: allDomains.length });
 
       const ac = new AbortController();
       abortRef.current = ac;
 
-      await runPool(chunks, 4, (chunk) => checkBatch(chunk, ac.signal), ac.signal);
+      // Phase 1: Serve cached results instantly from IndexedDB
+      const cached = await cacheGet(allDomains);
+      const uncachedDomains = [];
+      if (cached.size > 0) {
+        applyResults([...cached.values()], "browser-cache");
+        for (const d of allDomains) {
+          if (!cached.has(d)) uncachedDomains.push(d);
+        }
+      } else {
+        uncachedDomains.push(...allDomains);
+      }
+
+      // Phase 2: Check uncached domains via API with high parallelism
+      if (uncachedDomains.length > 0 && !ac.signal.aborted) {
+        const chunks = [];
+        for (let i = 0; i < uncachedDomains.length; i += BATCH_SIZE) {
+          chunks.push(uncachedDomains.slice(i, i + BATCH_SIZE));
+        }
+        await runPool(chunks, CONCURRENCY, (chunk) => checkBatch(chunk, ac.signal), ac.signal);
+      }
 
       if (!ac.signal.aborted) setChecking(false);
     } catch {

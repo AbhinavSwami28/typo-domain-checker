@@ -17,6 +17,6 @@ export default async function handler(req, res) {
     .filter((d) => typeof d === "string" && d.includes("."))
     .slice(0, MAX_BATCH);
 
-  const results = await checkBatch(clean, 10);
+  const results = await checkBatch(clean, 20);
   res.json({ results });
 }
