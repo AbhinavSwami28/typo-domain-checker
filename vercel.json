@@ -1,0 +1,10 @@
+{
+  "buildCommand": "cd client && npm install && npm run build",
+  "outputDirectory": "client/dist",
+  "framework": null,
+  "rewrites": [
+    { "source": "/api/generate", "destination": "/api/generate" },
+    { "source": "/api/check", "destination": "/api/check" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}
