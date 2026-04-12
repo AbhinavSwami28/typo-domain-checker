@@ -30,7 +30,7 @@ A security-focused tool that generates lookalike typo domains for any given doma
 │  │  Generator   │    │                              │   │
 │  │  (lib/)      │    │  ┌──────────────────────┐   │   │
 │  │              │    │  │  1. LRU Cache (1000)  │   │   │
-│  │  10 typo     │    │  │  2. DNS (native+DoH)  │   │   │
+│  │  25 typo     │    │  │  2. DNS (native+DoH)  │   │   │
 │  │  techniques  │    │  │  3. HTTP Probe         │   │   │
 │  └─────────────┘    │  │  4. Direct RDAP        │   │   │
 │                      │  │  5. RDAP Proxy         │   │   │
@@ -42,19 +42,37 @@ A security-focused tool that generates lookalike typo domains for any given doma
 
 ## Features
 
-### Typo Generation (10 techniques)
-| Technique | Example (for `example.com`) |
-|---|---|
-| Character Omission | `exmple.com` |
-| Transposition | `exapmle.com` |
-| Adjacent Key (QWERTY) | `exanple.com` |
-| Character Duplication | `exxample.com` |
-| Character Insertion | `exaample.com` |
-| Homoglyph Substitution | `examp1e.com`, `exampl3.com` |
-| TLD Swap | `example.net`, `example.io` |
-| Dot Insertion | `ex.ample.com` |
-| Hyphen Insertion | `ex-ample.com` |
-| Vowel Swap | `axample.com` |
+### Typo Generation (25 techniques)
+
+Techniques derived from industry tools like [dnstwist](https://github.com/elceef/dnstwist) and URLCrazy:
+
+| # | Technique | Example (for `my-example.com`) |
+|---|---|---|
+| 1 | Character Omission | `my-exmple.com` |
+| 2 | Transposition | `my-exapmle.com` |
+| 3 | Adjacent Key (QWERTY) | `my-exanple.com` |
+| 4 | Character Duplication | `my-exxample.com` |
+| 5 | Character Insertion | `my-exaample.com` |
+| 6 | Homoglyph Substitution | `my-examp1e.com` |
+| 7 | TLD Swap | `my-example.net`, `my-example.io` |
+| 8 | Dot Insertion | `my-ex.ample.com` |
+| 9 | Hyphen Insertion | `my-ex-ample.com` |
+| 10 | Vowel Swap | `my-axample.com` |
+| 11 | Bitsquatting | `my-gxample.com` (single-bit flip) |
+| 12 | Word Swap | `example-my.com` |
+| 13 | Word Omission | `my.com`, `example.com` |
+| 14 | Hyphen Omission | `myexample.com` |
+| 15 | WWW Prefix | `wwwmy-example.com` |
+| 16 | Prefix Addition | `login-my-example.com`, `secure-my-example.com` |
+| 17 | Suffix Addition | `my-example-online.com`, `my-example-login.com` |
+| 18 | ccTLD Variants | `my-example.co.uk`, `my-example.com.au` |
+| 19 | Singular/Plural | `my-examples.com` |
+| 20 | Numeric Addition | `my-example1.com`, `my-example-365.com` |
+| 21 | Adjacent Key (QWERTZ) | German keyboard layout variants |
+| 22 | Adjacent Key (AZERTY) | French keyboard layout variants |
+| 23 | Cyrillic IDN Homograph | `my-ехаmрlе.com` (Cyrillic lookalikes) |
+| 24 | Homophones | `mail-sale.com` → `male-sale.com` |
+| 25 | Common Misspellings | `accommodasion.com` (tion→sion) |
 
 ### Domain Availability Check (7-source multi-layer strategy)
 
@@ -85,8 +103,28 @@ Each domain is checked using a parallel + fallback strategy across 7 independent
 - `source` field shows which sources contributed (e.g., `rdap+dns+http`)
 - Results are cached in a 1000-entry LRU cache to avoid redundant lookups
 
+### Risk Scoring
+
+Each typo domain is assigned a threat risk score (0-100) calculated from four factors:
+
+| Factor | Effect on Score |
+|---|---|
+| **Edit distance** (Levenshtein) | Base score: `100 - (distance * 25)`. Closer = higher risk. |
+| **TLD match** | -20 points if the TLD differs from the original |
+| **Typo type** | +15 for Homoglyphs (visually deceptive), +10 for Transpositions (common typo) |
+| **Registration status** | +20 if the domain is actually registered |
+
+Risk levels:
+
+| Score | Label | Meaning |
+|---|---|---|
+| 80-100 | **Critical** | Very close lookalike, likely registered maliciously |
+| 60-79 | **High** | Convincing typosquat, worth investigating |
+| 40-59 | **Medium** | Moderate risk, less likely to fool users |
+| 0-39 | **Low** | Distant variant, low deception potential |
+
 ### Frontend Features
-- **Risk scoring** — each typo gets a risk score (Critical/High/Medium/Low) based on edit distance, TLD match, typo type, and registration status
+- **Risk scoring** — each typo scored and color-coded by threat level (see above)
 - **Sortable columns** — click column headers to sort by domain, status, or risk
 - **Pagination** — 50 results per page for smooth rendering
 - **CSV export** — download all results with risk scores for reporting
@@ -173,11 +211,40 @@ Check registration status for up to 20 domains.
       "registrar": "NameCheap, Inc.",
       "created": "2020-01-15T00:00:00Z",
       "expires": "2025-01-15T00:00:00Z",
-      "source": "rdap"
+      "source": "rdap+dns+http"
     }
   ]
 }
 ```
+
+#### Response fields
+
+| Field | Type | Description |
+|---|---|---|
+| `domain` | string | The domain that was checked |
+| `registered` | `true` / `false` / `null` | Registration status (`null` = all sources failed) |
+| `registrar` | string or null | Registrar name (from RDAP or WHOIS) |
+| `created` | ISO 8601 or null | Registration date |
+| `expires` | ISO 8601 or null | Expiration date |
+| `nameservers` | string[] | Up to 4 nameservers |
+| `source` | string | Which sources confirmed the result (see below) |
+| `cached` | boolean | `true` if served from LRU cache |
+| `note` | string or null | Human-readable explanation for edge cases |
+
+#### `source` field values
+
+The `source` field is a `+`-delimited string showing which lookup sources contributed to the result:
+
+| Value | Meaning |
+|---|---|
+| `rdap` | Direct registry RDAP returned the result |
+| `rdap-proxy` | RDAP via `rdap.org` proxy |
+| `whois` | WHOIS via `whoiser` |
+| `dns` | Confirmed via DNS resolution (native or DoH) |
+| `http` | Confirmed via HTTP HEAD probe (web server responded) |
+| `none` | All sources failed |
+
+Combined examples: `rdap+dns+http` (all three confirmed), `dns` (only DNS confirmed, RDAP/WHOIS unavailable), `whois+dns` (WHOIS provided details, DNS confirmed).
 
 ### `GET /api/check?domain=example.com`
 Check a single domain (same response shape as batch results).
@@ -205,6 +272,73 @@ typo-domain-checker/
 ├── vercel.json
 └── package.json
 ```
+
+## Performance
+
+Benchmarks for `netflix.com` (409 generated variants, 294 registered):
+
+| Metric | Value |
+|---|---|
+| Typo generation (25 techniques) | ~1.4ms |
+| Full batch check (409 domains, 7 sources) | ~112s |
+| Average per-domain check | ~274ms (with parallelism) |
+| Cache hit | <1ms |
+| Unknown/failed lookups | 0 out of 409 |
+| Batch throughput | ~60 domains checked concurrently (4 batches x 10 workers) |
+
+Frontend batching: 16 domains per batch, 4 batches in-flight concurrently. Backend runs 10 concurrent lookups per batch. Effectively checks ~60 domains at once.
+
+## Limitations & Known Caveats
+
+### Upstream rate limits
+- **rdap.org proxy** — no published rate limit, but aggressive querying may trigger temporary blocks. Direct registry RDAP servers (Verisign, etc.) are preferred when available.
+- **Google DoH / Cloudflare DoH** — generous public limits, but may throttle under sustained high-volume use.
+- **WHOIS servers** — many registrars limit to ~30-50 queries/minute per IP. The `whoiser` library handles this internally with timeouts, but bursts can fail.
+
+### Data accuracy
+- **WHOIS under GDPR** — European registrars redact registrant details (name, email, org) under GDPR. Registrar name, dates, and nameservers are still available.
+- **RDAP coverage** — not all TLDs support RDAP yet. The tool falls back to WHOIS, but some obscure ccTLDs may return no data.
+- **DNS-only results** — when RDAP and WHOIS both fail, DNS can confirm a domain is registered but cannot provide registrar details. These appear as "Registered (confirmed via dns, details unavailable)".
+
+### Serverless (Vercel) caveats
+- **Cold starts** — first request after inactivity may take 1-3s as the serverless function initializes.
+- **Cache is per-invocation** — the LRU cache lives in-memory per function instance. On Vercel, each function invocation may get a fresh instance, so cache hits mainly help within a single batch scan, not across separate user sessions.
+- **Function timeout** — Vercel Hobby plan has a 10s function timeout. Large batches are capped at 20 domains per request to stay within limits.
+
+### Generation limits
+- **IDN/Cyrillic domains** — generated but may not be registerable on all TLDs. Some registries reject mixed-script domains.
+- **Homophones & misspellings** — only trigger for domains containing common English words. Proper nouns (company names) won't match the built-in dictionaries.
+
+## Contributing
+
+Contributions are welcome. To get started:
+
+```bash
+# Fork and clone the repo
+git clone https://github.com/<your-username>/typo-domain-checker.git
+cd typo-domain-checker
+
+# Install dependencies
+npm install
+cd server && npm install && cd ..
+cd client && npm install && cd ..
+
+# Start dev environment
+npm run dev
+```
+
+### Areas where contributions would help
+- **Expanded RDAP direct server mappings** — add more TLDs to `DIRECT_RDAP` in `lib/domainChecker.js`
+- **Homophone/misspelling dictionaries** — expand the built-in word lists in `lib/domainGenerator.js`
+- **Additional keyboard layouts** — Dvorak, Colemak, or regional layouts
+- **Test suite** — unit tests for generation and checking logic
+- **Internationalized domain support** — better handling of IDN/punycode edge cases
+
+### Reporting issues
+Open an issue at [github.com/AbhinavSwami28/typo-domain-checker/issues](https://github.com/AbhinavSwami28/typo-domain-checker/issues) with:
+- The domain you tested
+- Expected vs actual behavior
+- Browser/OS if it's a frontend issue
 
 ## License
 

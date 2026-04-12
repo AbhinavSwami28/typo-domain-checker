@@ -457,10 +457,17 @@ export default function App() {
             <h3>Detection Techniques</h3>
             <div className="technique-grid">
               {[
-                "Character Omission", "Transposition", "Adjacent Key",
+                "Character Omission", "Transposition",
+                "Adjacent Key (QWERTY/QWERTZ/AZERTY)",
                 "Character Duplication", "Character Insertion",
-                "Homoglyph Substitution", "TLD Swap", "Dot Insertion",
-                "Hyphen Insertion", "Vowel Swap",
+                "Homoglyph Substitution", "Double Homoglyph",
+                "TLD Swap", "Dot Insertion",
+                "Hyphen Insertion", "Vowel Swap", "Bitsquatting",
+                "Word Swap", "Word Omission", "Hyphen Omission",
+                "WWW Prefix", "Prefix/Suffix Addition", "ccTLD Variants",
+                "Singular/Plural", "Numeric Addition",
+                "Cyrillic IDN Homograph", "Homophones",
+                "Common Misspellings",
               ].map((t) => (
                 <span key={t}>{t}</span>
               ))}
