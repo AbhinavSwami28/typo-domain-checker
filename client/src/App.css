@@ -201,6 +201,71 @@ header h1 {
   border-color: #1f6feb;
   color: #fff;
 }
+.filter-btn-advanced {
+  margin-left: auto;
+}
+
+/* Advanced filters panel */
+.advanced-filters {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+.adv-filter-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.adv-filter-row:last-child {
+  margin-bottom: 0;
+}
+.adv-filter-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 160px;
+}
+.adv-filter-row label span {
+  font-size: 0.75rem;
+  color: #8b949e;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.adv-filter-row select,
+.adv-filter-row input[type="date"] {
+  padding: 8px 10px;
+  font-size: 0.85rem;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  background: #0d1117;
+  color: #e1e4e8;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.adv-filter-row select:focus,
+.adv-filter-row input[type="date"]:focus {
+  border-color: #58a6ff;
+}
+.adv-filter-row select {
+  max-width: 300px;
+}
+.btn-clear-filters {
+  padding: 6px 14px;
+  font-size: 0.8rem;
+  border: 1px solid #f85149;
+  border-radius: 6px;
+  background: transparent;
+  color: #f85149;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.btn-clear-filters:hover {
+  background: #3d1f1f;
+}
 
 /* Table */
 .table-wrapper {

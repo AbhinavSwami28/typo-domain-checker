@@ -165,6 +165,16 @@ export default function App() {
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [page, setPage] = useState(0);
   const [sortBy, setSortBy] = useState(null); // null | "risk" | "domain" | "status"
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [advFilters, setAdvFilters] = useState({
+    type: "",
+    registrar: "",
+    source: "",
+    createdFrom: "",
+    createdTo: "",
+    expiresFrom: "",
+    expiresTo: "",
+  });
   const abortRef = useRef(null);
 
   const checkBatch = useCallback(async (domains, signal) => {
@@ -238,6 +248,8 @@ export default function App() {
     setFilter("all");
     setPage(0);
     setSortBy(null);
+    setShowAdvanced(false);
+    setAdvFilters({ type: "", registrar: "", source: "", createdFrom: "", createdTo: "", expiresFrom: "", expiresTo: "" });
     handleCancel();
 
     const trimmed = domain.trim().toLowerCase();
@@ -297,8 +309,49 @@ export default function App() {
     }
   };
 
-  // Filtering
-  const filtered = typos.filter((t) => filter === "all" || t.status === filter);
+  // Compute dynamic filter options (only from completed results)
+  const checksComplete = !checking && typos.length > 0;
+  const filterOptions = checksComplete ? {
+    types: [...new Set(typos.map((t) => t.type))].sort(),
+    registrars: [...new Set(typos.filter((t) => t.registrar).map((t) => t.registrar))].sort(),
+    sources: [...new Set(typos.filter((t) => t.source).map((t) => t.source))].sort(),
+  } : { types: [], registrars: [], sources: [] };
+
+  const updateAdvFilter = (key, val) => {
+    setAdvFilters((prev) => ({ ...prev, [key]: val }));
+    setPage(0);
+  };
+
+  const hasActiveAdvFilters = Object.values(advFilters).some((v) => v !== "");
+
+  const clearAdvFilters = () => {
+    setAdvFilters({ type: "", registrar: "", source: "", createdFrom: "", createdTo: "", expiresFrom: "", expiresTo: "" });
+    setPage(0);
+  };
+
+  // Filtering — status tabs + advanced filters (AND logic)
+  const filtered = typos.filter((t) => {
+    if (filter !== "all" && t.status !== filter) return false;
+    if (advFilters.type && t.type !== advFilters.type) return false;
+    if (advFilters.registrar && (t.registrar || "") !== advFilters.registrar) return false;
+    if (advFilters.source && (t.source || "") !== advFilters.source) return false;
+    if (advFilters.createdFrom && t.created) {
+      if (new Date(t.created) < new Date(advFilters.createdFrom)) return false;
+    }
+    if (advFilters.createdTo && t.created) {
+      if (new Date(t.created) > new Date(advFilters.createdTo + "T23:59:59")) return false;
+    }
+    if (advFilters.expiresFrom && t.expires) {
+      if (new Date(t.expires) < new Date(advFilters.expiresFrom)) return false;
+    }
+    if (advFilters.expiresTo && t.expires) {
+      if (new Date(t.expires) > new Date(advFilters.expiresTo + "T23:59:59")) return false;
+    }
+    // If a date filter is active but the domain has no date, exclude it
+    if ((advFilters.createdFrom || advFilters.createdTo) && !t.created) return false;
+    if ((advFilters.expiresFrom || advFilters.expiresTo) && !t.expires) return false;
+    return true;
+  });
 
   // Sorting
   const sorted = [...filtered];
@@ -419,7 +472,66 @@ export default function App() {
                 {f.charAt(0).toUpperCase() + f.slice(1)} ({counts[f]})
               </button>
             ))}
+            {checksComplete && (
+              <button
+                className={`filter-btn filter-btn-advanced ${showAdvanced ? "active" : ""}`}
+                onClick={() => setShowAdvanced((v) => !v)}
+              >
+                Filters {hasActiveAdvFilters ? "*" : ""}
+              </button>
+            )}
           </div>
+
+          {showAdvanced && checksComplete && (
+            <div className="advanced-filters">
+              <div className="adv-filter-row">
+                <label>
+                  <span>Type</span>
+                  <select value={advFilters.type} onChange={(e) => updateAdvFilter("type", e.target.value)}>
+                    <option value="">All types</option>
+                    {filterOptions.types.map((t) => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </label>
+                <label>
+                  <span>Registrar</span>
+                  <select value={advFilters.registrar} onChange={(e) => updateAdvFilter("registrar", e.target.value)}>
+                    <option value="">All registrars</option>
+                    {filterOptions.registrars.map((r) => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                </label>
+                <label>
+                  <span>Source</span>
+                  <select value={advFilters.source} onChange={(e) => updateAdvFilter("source", e.target.value)}>
+                    <option value="">All sources</option>
+                    {filterOptions.sources.map((s) => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </label>
+              </div>
+              <div className="adv-filter-row">
+                <label>
+                  <span>Created from</span>
+                  <input type="date" value={advFilters.createdFrom} onChange={(e) => updateAdvFilter("createdFrom", e.target.value)} />
+                </label>
+                <label>
+                  <span>Created to</span>
+                  <input type="date" value={advFilters.createdTo} onChange={(e) => updateAdvFilter("createdTo", e.target.value)} />
+                </label>
+                <label>
+                  <span>Expires from</span>
+                  <input type="date" value={advFilters.expiresFrom} onChange={(e) => updateAdvFilter("expiresFrom", e.target.value)} />
+                </label>
+                <label>
+                  <span>Expires to</span>
+                  <input type="date" value={advFilters.expiresTo} onChange={(e) => updateAdvFilter("expiresTo", e.target.value)} />
+                </label>
+              </div>
+              {hasActiveAdvFilters && (
+                <button className="btn-clear-filters" onClick={clearAdvFilters}>
+                  Clear all filters
+                </button>
+              )}
+            </div>
+          )}
 
           <div className="table-wrapper">
             <table>
