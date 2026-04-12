@@ -105,7 +105,7 @@ Each domain is checked using a parallel + fallback strategy across 7 independent
 
 ### Risk Scoring
 
-Each typo domain is assigned a threat risk score (0-100) calculated from four factors:
+Each typo domain is assigned a threat risk score (0-100) calculated from multiple factors:
 
 | Factor | Effect on Score |
 |---|---|
@@ -113,6 +113,11 @@ Each typo domain is assigned a threat risk score (0-100) calculated from four fa
 | **TLD match** | -20 points if the TLD differs from the original |
 | **Typo type** | +15 for Homoglyphs (visually deceptive), +10 for Transpositions (common typo) |
 | **Registration status** | +20 if the domain is actually registered |
+| **Same registrar as original** | -40 points (likely a defensive registration by the brand owner) |
+| **Same registrar + similar creation date** | Additional -20 points (almost certainly defensive) |
+| **Known corporate registrar** | -20 points even if different from original (CSC, MarkMonitor, SafeNames, etc.) |
+
+The tool automatically looks up the original domain's registrar at scan start and uses it as a baseline. Typo domains registered by the same registrar (e.g., CSC Corporate Domains for both the original and the typo) are treated as likely defensive registrations and scored much lower.
 
 Risk levels:
 
@@ -121,7 +126,8 @@ Risk levels:
 | 80-100 | **Critical** | Very close lookalike, likely registered maliciously |
 | 60-79 | **High** | Convincing typosquat, worth investigating |
 | 40-59 | **Medium** | Moderate risk, less likely to fool users |
-| 0-39 | **Low** | Distant variant, low deception potential |
+| 10-39 | **Low** | Distant variant, low deception potential |
+| 0-9 | **Defensive** | Likely a protective registration by the brand owner |
 
 ### Frontend Features
 - **Risk scoring** — each typo scored and color-coded by threat level (see above)

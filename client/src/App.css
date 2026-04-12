@@ -144,6 +144,13 @@ header h1 {
 .stats-count {
   color: #8b949e;
 }
+.stats-registrar {
+  color: #8b949e;
+  font-size: 0.85rem;
+}
+.stats-registrar strong {
+  color: #56d364;
+}
 .stats-progress {
   color: #d29922;
   font-size: 0.9rem;
@@ -315,6 +322,10 @@ tr:hover {
 .risk-low {
   background: #1c2333;
   color: #8b949e;
+}
+.risk-defensive {
+  background: #0d2818;
+  color: #56d364;
 }
 
 /* Source & meta columns */

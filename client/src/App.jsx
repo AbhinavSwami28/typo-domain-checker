@@ -43,7 +43,49 @@ function levenshtein(a, b) {
   return dp[m][n];
 }
 
-function computeRisk(original, typo) {
+// Known enterprise/corporate domain registrars used for brand protection
+const CORPORATE_REGISTRARS = [
+  "csc corporate domains",
+  "markmonitor",
+  "safenames",
+  "comlaude",
+  "nom-iq",
+  "corsearch",
+  "brandshelter",
+  "gandi corporate",
+];
+
+function normalizeRegistrar(registrar) {
+  if (!registrar) return "";
+  return registrar.toLowerCase().replace(/[,.].*$/, "").trim();
+}
+
+function isSameRegistrar(regA, regB) {
+  if (!regA || !regB) return false;
+  const a = normalizeRegistrar(regA);
+  const b = normalizeRegistrar(regB);
+  if (a === b) return true;
+  // Fuzzy: check if one contains the other (e.g., "CSC Corporate Domains" vs "CSC Corporate Domains, Inc.")
+  return a.includes(b) || b.includes(a);
+}
+
+function isCorporateRegistrar(registrar) {
+  if (!registrar) return false;
+  const norm = registrar.toLowerCase();
+  return CORPORATE_REGISTRARS.some((cr) => norm.includes(cr));
+}
+
+function areDatesClose(dateA, dateB, thresholdDays = 365) {
+  if (!dateA || !dateB) return false;
+  try {
+    const diff = Math.abs(new Date(dateA) - new Date(dateB));
+    return diff <= thresholdDays * 24 * 60 * 60 * 1000;
+  } catch {
+    return false;
+  }
+}
+
+function computeRisk(original, typo, originalInfo) {
   const origName = original.split(".")[0];
   const typoName = typo.domain.split(".")[0];
   const dist = levenshtein(origName, typoName);
@@ -56,6 +98,25 @@ function computeRisk(original, typo) {
   if (typo.type === "Transposition") score = Math.min(100, score + 10);
   if (typo.status === "registered") score = Math.min(100, score + 20);
 
+  // Defensive registration detection: reduce risk if same registrar as original
+  if (typo.status === "registered" && originalInfo?.registrar && typo.registrar) {
+    const sameReg = isSameRegistrar(originalInfo.registrar, typo.registrar);
+    const corpReg = isCorporateRegistrar(typo.registrar);
+    const datesClose = areDatesClose(originalInfo.created, typo.created);
+
+    if (sameReg) {
+      // Same registrar as the original domain — very likely defensive
+      score = Math.max(0, score - 40);
+      if (datesClose) {
+        // Same registrar AND registered around the same time — almost certainly defensive
+        score = Math.max(0, score - 20);
+      }
+    } else if (corpReg) {
+      // Different registrar but it's a known corporate registrar — likely legitimate
+      score = Math.max(0, score - 20);
+    }
+  }
+
   return score;
 }
 
@@ -63,13 +124,14 @@ function getRiskLabel(score) {
   if (score >= 80) return { label: "Critical", cls: "risk-critical" };
   if (score >= 60) return { label: "High", cls: "risk-high" };
   if (score >= 40) return { label: "Medium", cls: "risk-medium" };
-  return { label: "Low", cls: "risk-low" };
+  if (score >= 10) return { label: "Low", cls: "risk-low" };
+  return { label: "Defensive", cls: "risk-defensive" };
 }
 
-function exportCSV(typos, original) {
+function exportCSV(typos, original, originalInfo) {
   const header = "Domain,Type,Status,Risk Score,Registrar,Created,Expires,Source\n";
   const rows = typos.map((t) => {
-    const risk = computeRisk(original, t);
+    const risk = computeRisk(original, t, originalInfo);
     return [
       t.domain,
       t.type,
@@ -201,7 +263,17 @@ export default function App() {
 
       const typoList = data.typos.map((t) => ({ ...t, status: "checking" }));
       setTypos(typoList);
-      setStats({ original: data.original, count: data.count });
+
+      // Look up the original domain to get its registrar for risk comparison
+      let originalInfo = null;
+      try {
+        const origRes = await fetch(`/api/check?domain=${encodeURIComponent(trimmed)}`);
+        if (origRes.ok) {
+          originalInfo = await origRes.json();
+        }
+      } catch { /* proceed without original info */ }
+
+      setStats({ original: data.original, count: data.count, originalInfo });
       setLoading(false);
       setChecking(true);
 
@@ -231,7 +303,7 @@ export default function App() {
   // Sorting
   const sorted = [...filtered];
   if (sortBy === "risk" && stats) {
-    sorted.sort((a, b) => computeRisk(stats.original, b) - computeRisk(stats.original, a));
+    sorted.sort((a, b) => computeRisk(stats.original, b, stats.originalInfo) - computeRisk(stats.original, a, stats.originalInfo));
   } else if (sortBy === "domain") {
     sorted.sort((a, b) => a.domain.localeCompare(b.domain));
   } else if (sortBy === "status") {
@@ -304,6 +376,11 @@ export default function App() {
             Target: <strong>{stats.original}</strong>
           </span>
           <span className="stats-count">{stats.count} variants</span>
+          {stats.originalInfo?.registrar && (
+            <span className="stats-registrar">
+              Registrar: <strong>{stats.originalInfo.registrar}</strong>
+            </span>
+          )}
           {checking && (
             <span className="stats-progress">
               Checking... {progress.done}/{progress.total} ({pct}%)
@@ -314,7 +391,7 @@ export default function App() {
               <span className="stats-done">All checks complete</span>
               <button
                 className="btn-export"
-                onClick={() => exportCSV(typos, stats.original)}
+                onClick={() => exportCSV(typos, stats.original, stats.originalInfo)}
                 title="Download results as CSV"
               >
                 Export CSV
@@ -376,7 +453,7 @@ export default function App() {
               </thead>
               <tbody>
                 {paginated.map((t, i) => {
-                  const riskScore = stats ? computeRisk(stats.original, t) : 0;
+                  const riskScore = stats ? computeRisk(stats.original, t, stats.originalInfo) : 0;
                   const risk = getRiskLabel(riskScore);
                   return (
                     <tr key={t.domain} className={`row-${t.status}`}>
