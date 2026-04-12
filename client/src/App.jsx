@@ -544,7 +544,8 @@ export default function App() {
                 "WWW Prefix", "Prefix/Suffix Addition", "ccTLD Variants",
                 "Singular/Plural", "Numeric Addition",
                 "Cyrillic IDN Homograph", "Homophones",
-                "Common Misspellings",
+                "Common Misspellings", "Double Omission",
+                "Vowel Omission",
               ].map((t) => (
                 <span key={t}>{t}</span>
               ))}

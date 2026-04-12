@@ -30,7 +30,7 @@ A security-focused tool that generates lookalike typo domains for any given doma
 │  │  Generator   │    │                              │   │
 │  │  (lib/)      │    │  ┌──────────────────────┐   │   │
 │  │              │    │  │  1. LRU Cache (1000)  │   │   │
-│  │  25 typo     │    │  │  2. DNS (native+DoH)  │   │   │
+│  │  27 typo     │    │  │  2. DNS (native+DoH)  │   │   │
 │  │  techniques  │    │  │  3. HTTP Probe         │   │   │
 │  └─────────────┘    │  │  4. Direct RDAP        │   │   │
 │                      │  │  5. RDAP Proxy         │   │   │
@@ -42,7 +42,7 @@ A security-focused tool that generates lookalike typo domains for any given doma
 
 ## Features
 
-### Typo Generation (25 techniques)
+### Typo Generation (27 techniques)
 
 Techniques derived from industry tools like [dnstwist](https://github.com/elceef/dnstwist) and URLCrazy:
 
@@ -73,6 +73,8 @@ Techniques derived from industry tools like [dnstwist](https://github.com/elceef
 | 23 | Cyrillic IDN Homograph | `my-ехаmрlе.com` (Cyrillic lookalikes) |
 | 24 | Homophones | `mail-sale.com` → `male-sale.com` |
 | 25 | Common Misspellings | `accommodasion.com` (tion→sion) |
+| 26 | Double Omission | `ntflx.com` (two chars removed at once) |
+| 27 | Vowel Omission | `vrshds-sthrlnd.com` (multiple vowels stripped) |
 
 ### Domain Availability Check (7-source multi-layer strategy)
 
