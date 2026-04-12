@@ -93,6 +93,54 @@ app.get("/api/check", async (req, res) => {
   }
 });
 
+/**
+ * POST /api/check-batch
+ * Body: { domains: ["example.com", "exmple.com", ...] }
+ * Checks up to 15 domains in parallel via RDAP.
+ */
+app.post("/api/check-batch", async (req, res) => {
+  const { domains } = req.body;
+
+  if (!Array.isArray(domains) || domains.length === 0) {
+    return res.status(400).json({ error: "Provide an array of domains" });
+  }
+
+  const batch = domains.slice(0, 15);
+
+  async function checkOne(domain) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 4000);
+      const response = await fetch(`https://rdap.org/domain/${domain}`, {
+        signal: controller.signal,
+        headers: { Accept: "application/rdap+json" },
+      });
+      clearTimeout(timeout);
+
+      if (response.ok) {
+        const data = await response.json();
+        const registrar =
+          data.entities?.find((e) => e.roles?.includes("registrar"))?.vcardArray?.[1]?.find(
+            (v) => v[0] === "fn"
+          )?.[3] || "Unknown";
+        const events = data.events || [];
+        const created = events.find((e) => e.eventAction === "registration")?.eventDate || null;
+        const expires = events.find((e) => e.eventAction === "expiration")?.eventDate || null;
+        return { domain, registered: true, registrar, created, expires };
+      } else if (response.status === 404) {
+        return { domain, registered: false };
+      } else {
+        return { domain, registered: null, note: "RDAP not available for this TLD" };
+      }
+    } catch (err) {
+      return { domain, registered: null, note: err.name === "AbortError" ? "Timed out" : "Lookup failed" };
+    }
+  }
+
+  const results = await Promise.all(batch.map(checkOne));
+  res.json({ results });
+});
+
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });

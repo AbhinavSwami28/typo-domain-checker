@@ -133,6 +133,21 @@ header h1 {
   font-size: 0.9rem;
 }
 
+.progress-bar-wrapper {
+  height: 4px;
+  background: #21262d;
+  border-radius: 2px;
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+
+.progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #1f6feb, #58a6ff);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
 .note-text {
   color: #6e7681;
   font-size: 0.75rem;

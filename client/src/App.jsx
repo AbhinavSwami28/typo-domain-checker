@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 
 const STATUS_LABELS = {
   checking: "Checking...",
@@ -7,71 +7,81 @@ const STATUS_LABELS = {
   unknown: "Unknown",
 };
 
+// Concurrent pool: runs `fn` for each item with max `concurrency` in-flight
+async function runPool(items, concurrency, fn) {
+  let idx = 0;
+  async function worker() {
+    while (idx < items.length) {
+      const i = idx++;
+      await fn(items[i], i);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => worker()));
+}
+
 export default function App() {
   const [domain, setDomain] = useState("");
   const [typos, setTypos] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [checking, setChecking] = useState(false);
   const [error, setError] = useState("");
   const [stats, setStats] = useState(null);
   const [filter, setFilter] = useState("all");
-  const [checkingCount, setCheckingCount] = useState(0);
+  const [progress, setProgress] = useState({ done: 0, total: 0 });
+  const cancelledRef = useRef(false);
 
-  const checkDomain = useCallback(async (domainToCheck, index, setTyposFn) => {
-    const MAX_RETRIES = 2;
-    let lastErr = null;
+  const checkBatch = useCallback(async (domains, startIndex) => {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 12000);
 
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-      try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 8000);
+      const res = await fetch("/api/check-batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ domains }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      const data = await res.json();
 
-        const res = await fetch(
-          `/api/check?domain=${encodeURIComponent(domainToCheck)}`,
-          { signal: controller.signal }
-        );
-        clearTimeout(timeout);
-        const data = await res.json();
-
-        setTyposFn((prev) => {
-          const updated = [...prev];
-          if (updated[index]) {
-            updated[index] = {
-              ...updated[index],
+      setTypos((prev) => {
+        const updated = [...prev];
+        for (const result of data.results) {
+          const idx = updated.findIndex((t) => t.domain === result.domain);
+          if (idx !== -1) {
+            updated[idx] = {
+              ...updated[idx],
               status:
-                data.registered === true
+                result.registered === true
                   ? "registered"
-                  : data.registered === false
+                  : result.registered === false
                     ? "available"
                     : "unknown",
-              registrar: data.registrar ?? null,
-              created: data.created ?? null,
-              expires: data.expires ?? null,
-              note: data.note ?? null,
+              registrar: result.registrar ?? null,
+              created: result.created ?? null,
+              expires: result.expires ?? null,
+              note: result.note ?? null,
             };
           }
-          return updated;
-        });
-        return; // success
-      } catch (err) {
-        lastErr = err;
-        if (attempt < MAX_RETRIES) {
-          await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
         }
-      }
-    }
+        return updated;
+      });
 
-    // All retries exhausted
-    setTyposFn((prev) => {
-      const updated = [...prev];
-      if (updated[index]) {
-        updated[index] = {
-          ...updated[index],
-          status: "unknown",
-          note: lastErr?.name === "AbortError" ? "Timed out" : "Request failed",
-        };
-      }
-      return updated;
-    });
+      setProgress((p) => ({ ...p, done: p.done + domains.length }));
+    } catch {
+      // Mark all in this batch as unknown
+      setTypos((prev) => {
+        const updated = [...prev];
+        for (const d of domains) {
+          const idx = updated.findIndex((t) => t.domain === d);
+          if (idx !== -1) {
+            updated[idx] = { ...updated[idx], status: "unknown", note: "Batch failed" };
+          }
+        }
+        return updated;
+      });
+      setProgress((p) => ({ ...p, done: p.done + domains.length }));
+    }
   }, []);
 
   const handleGenerate = async (e) => {
@@ -80,6 +90,7 @@ export default function App() {
     setTypos([]);
     setStats(null);
     setFilter("all");
+    cancelledRef.current = false;
 
     const trimmed = domain.trim().toLowerCase();
     if (!trimmed || !trimmed.includes(".")) {
@@ -108,30 +119,29 @@ export default function App() {
       setTypos(typoList);
       setStats({ original: data.original, count: data.count });
       setLoading(false);
+      setChecking(true);
 
-      // Check availability: batch of 3, await entire batch before next
-      const BATCH_SIZE = 3;
-      const BATCH_DELAY = 600;
-      setCheckingCount(typoList.length);
-
+      // Split into chunks of 15 (backend batch limit)
+      const BATCH_SIZE = 15;
+      const chunks = [];
       for (let i = 0; i < typoList.length; i += BATCH_SIZE) {
-        const batch = typoList.slice(i, i + BATCH_SIZE);
-        const promises = batch.map((t, batchIdx) =>
-          checkDomain(t.domain, i + batchIdx, setTypos).finally(() =>
-            setCheckingCount((c) => c - 1)
-          )
-        );
-
-        // Wait for the entire batch to finish before starting the next
-        await Promise.allSettled(promises);
-
-        if (i + BATCH_SIZE < typoList.length) {
-          await new Promise((resolve) => setTimeout(resolve, BATCH_DELAY));
-        }
+        chunks.push(typoList.slice(i, i + BATCH_SIZE).map((t) => t.domain));
       }
+
+      setProgress({ done: 0, total: typoList.length });
+
+      // Run 4 batch requests concurrently — each batch checks 15 domains
+      // server-side in parallel. So effectively 60 domains checked at once.
+      await runPool(chunks, 4, async (chunk, i) => {
+        if (cancelledRef.current) return;
+        await checkBatch(chunk, i * BATCH_SIZE);
+      });
+
+      setChecking(false);
     } catch {
       setError("Failed to connect to server. Is the backend running?");
       setLoading(false);
+      setChecking(false);
     }
   };
 
@@ -168,6 +178,8 @@ export default function App() {
     return value;
   };
 
+  const pct = progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
+
   return (
     <div className="app">
       <header>
@@ -201,14 +213,20 @@ export default function App() {
           <span className="stats-count">
             {stats.count} typo domains generated
           </span>
-          {checkingCount > 0 && (
+          {checking && (
             <span className="stats-progress">
-              Checking availability... ({checkingCount} remaining)
+              Checking... {progress.done}/{progress.total} ({pct}%)
             </span>
           )}
-          {checkingCount === 0 && typos.length > 0 && (
+          {!checking && typos.length > 0 && (
             <span className="stats-done">All checks complete</span>
           )}
+        </div>
+      )}
+
+      {checking && (
+        <div className="progress-bar-wrapper">
+          <div className="progress-bar" style={{ width: `${pct}%` }} />
         </div>
       )}
 
@@ -252,9 +270,7 @@ export default function App() {
                         {STATUS_LABELS[t.status]}
                       </span>
                       {t.note && t.status === "unknown" && (
-                        <span className="note-text" title={t.note}>
-                          {" "}({t.note})
-                        </span>
+                        <span className="note-text"> ({t.note})</span>
                       )}
                     </td>
                     <td className="col-registrar" title={t.status === "registered" ? (t.registrar || "") : ""}>
