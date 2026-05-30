@@ -123,6 +123,40 @@ header h1 {
   margin-right: auto;
 }
 
+.rate-limit-banner {
+  position: relative;
+  background: #3d2f1f;
+  border: 1px solid #d29922;
+  color: #f0b429;
+  padding: 14px 40px 14px 16px;
+  border-radius: 8px;
+  margin: 0 auto 16px;
+  max-width: 720px;
+  line-height: 1.5;
+  text-align: left;
+}
+
+.rate-limit-banner strong {
+  color: #ffd66b;
+}
+
+.rate-limit-dismiss {
+  position: absolute;
+  top: 6px;
+  right: 10px;
+  background: transparent;
+  border: none;
+  color: #f0b429;
+  font-size: 20px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 4px 8px;
+}
+
+.rate-limit-dismiss:hover {
+  color: #ffd66b;
+}
+
 /* Stats bar */
 .stats-bar {
   display: flex;

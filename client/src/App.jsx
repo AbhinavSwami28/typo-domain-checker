@@ -230,6 +230,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState("");
+  const [rateLimited, setRateLimited] = useState(false);
   const [stats, setStats] = useState(null);
   const [filter, setFilter] = useState("all");
   const [progress, setProgress] = useState({ done: 0, total: 0 });
@@ -293,13 +294,22 @@ export default function App() {
         clearTimeout(timeout);
         signal?.removeEventListener("abort", onAbort);
 
-        if (res.status === 429 && attempt < MAX_ATTEMPTS) {
-          const retryAfter = Number(res.headers.get("Retry-After")) || 0;
-          const backoff = retryAfter > 0
-            ? retryAfter * 1000
-            : Math.min(8000, 500 * 2 ** (attempt - 1)) + Math.random() * 300;
-          await new Promise((r) => setTimeout(r, backoff));
-          continue;
+        if (res.status === 429) {
+          if (attempt < MAX_ATTEMPTS) {
+            const retryAfter = Number(res.headers.get("Retry-After")) || 0;
+            const backoff = retryAfter > 0
+              ? retryAfter * 1000
+              : Math.min(8000, 500 * 2 ** (attempt - 1)) + Math.random() * 300;
+            await new Promise((r) => setTimeout(r, backoff));
+            continue;
+          }
+          // Retries exhausted on 429 — surface to UI
+          setRateLimited(true);
+          const failedResults = domains.map((d) => ({
+            domain: d, registered: null, note: "Rate limited",
+          }));
+          applyResults(failedResults, "rate_limited");
+          return;
         }
 
         const text = await res.text();
@@ -338,6 +348,7 @@ export default function App() {
   const handleGenerate = async (e) => {
     e.preventDefault();
     setError("");
+    setRateLimited(false);
     setTypos([]);
     setStats(null);
     setFilter("all");
@@ -532,6 +543,22 @@ export default function App() {
       </form>
 
       {error && <div className="error" role="alert">{error}</div>}
+
+      {rateLimited && (
+        <div className="rate-limit-banner" role="alert">
+          <strong>Too many people are using this website right now.</strong>{" "}
+          We're hitting rate limits from upstream lookup services. Please try
+          again in a minute or two.
+          <button
+            type="button"
+            className="rate-limit-dismiss"
+            onClick={() => setRateLimited(false)}
+            aria-label="Dismiss"
+          >
+            ×
+          </button>
+        </div>
+      )}
 
       {stats && (
         <div className="stats-bar">
