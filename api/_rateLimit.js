@@ -3,7 +3,7 @@
 // has its own map — this is best-effort throttling, not a global guarantee.
 
 const WINDOW_MS = 60_000;
-const DEFAULT_LIMIT = Number(process.env.RATE_LIMIT_PER_MIN || 30);
+const DEFAULT_LIMIT = Number(process.env.RATE_LIMIT_PER_MIN || 200);
 const MAX_DOMAIN_LEN = 253;
 
 const buckets = new Map();

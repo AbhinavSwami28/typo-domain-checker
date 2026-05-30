@@ -8,8 +8,8 @@ const STATUS_LABELS = {
 };
 
 const PAGE_SIZE = 50;
-const BATCH_SIZE = 20;  // Match backend cap
-const CONCURRENCY = 4;  // Concurrent batch requests (tuned for spike traffic)
+const BATCH_SIZE = 50;  // Match backend cap
+const CONCURRENCY = 6;  // Concurrent batch requests
 const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 const DB_NAME = "typo-domain-cache";
 const STORE_NAME = "results";
@@ -274,34 +274,56 @@ export default function App() {
   }, []);
 
   const checkBatch = useCallback(async (domains, signal) => {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 20000);
-    if (signal) signal.addEventListener("abort", () => controller.abort());
+    const MAX_ATTEMPTS = 4;
 
-    try {
-      const res = await fetch("/api/check-batch", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ domains }),
-        signal: controller.signal,
-      });
-      clearTimeout(timeout);
-      const text = await res.text();
-      let data;
-      try { data = JSON.parse(text); } catch { throw new Error("Bad response"); }
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      if (signal?.aborted) return;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 20000);
+      const onAbort = () => controller.abort();
+      if (signal) signal.addEventListener("abort", onAbort);
 
-      // Write results to browser cache
-      cachePut(data.results);
+      try {
+        const res = await fetch("/api/check-batch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ domains }),
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+        signal?.removeEventListener("abort", onAbort);
 
-      applyResults(data.results, "api");
-    } catch (err) {
-      clearTimeout(timeout);
-      if (err.name === "AbortError") return;
-      // Mark all in this batch as unknown
-      const failedResults = domains.map((d) => ({
-        domain: d, registered: null, note: "Batch failed",
-      }));
-      applyResults(failedResults, "error");
+        if (res.status === 429 && attempt < MAX_ATTEMPTS) {
+          const retryAfter = Number(res.headers.get("Retry-After")) || 0;
+          const backoff = retryAfter > 0
+            ? retryAfter * 1000
+            : Math.min(8000, 500 * 2 ** (attempt - 1)) + Math.random() * 300;
+          await new Promise((r) => setTimeout(r, backoff));
+          continue;
+        }
+
+        const text = await res.text();
+        let data;
+        try { data = JSON.parse(text); } catch { throw new Error("Bad response"); }
+
+        cachePut(data.results);
+        applyResults(data.results, "api");
+        return;
+      } catch (err) {
+        clearTimeout(timeout);
+        signal?.removeEventListener("abort", onAbort);
+        if (err.name === "AbortError") return;
+        if (attempt < MAX_ATTEMPTS) {
+          const backoff = Math.min(4000, 400 * 2 ** (attempt - 1)) + Math.random() * 200;
+          await new Promise((r) => setTimeout(r, backoff));
+          continue;
+        }
+        const failedResults = domains.map((d) => ({
+          domain: d, registered: null, note: "Batch failed",
+        }));
+        applyResults(failedResults, "error");
+        return;
+      }
     }
   }, [applyResults]);
 

@@ -1,8 +1,8 @@
 import { checkBatch } from "../lib/domainChecker.js";
 import { rateLimit, isValidDomain } from "./_rateLimit.js";
 
-const MAX_BATCH = 20;
-const BATCH_CONCURRENCY = Number(process.env.BATCH_CONCURRENCY || 8);
+const MAX_BATCH = 50;
+const BATCH_CONCURRENCY = Number(process.env.BATCH_CONCURRENCY || 12);
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
