@@ -9,7 +9,7 @@ const STATUS_LABELS = {
 
 const PAGE_SIZE = 50;
 const BATCH_SIZE = 20;  // Match backend cap
-const CONCURRENCY = 8;  // Concurrent batch requests
+const CONCURRENCY = 4;  // Concurrent batch requests (tuned for spike traffic)
 const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 const DB_NAME = "typo-domain-cache";
 const STORE_NAME = "results";
